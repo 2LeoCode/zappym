@@ -1,31 +1,23 @@
-type
-  GfxErrorKind* = enum
-    gekGlfwPlatformError
-    gekGlfwNotInitialized
-    gekGlfwInvalidEnum
-    gekGlfwInvalidValue
-    gekGlfwApiUnavailable
-    gekGlfwVersionUnavailable
-    gekGlfwFormatUnavailable
-    gekGlfwNoWindowContext
-    gekGlfwUnknownError
-    gekGlInvalidEnum
-    gekGlInvalidValue
-    gekGlInvalidOperation
-    gekGlStackOverflow
-    gekGlStackUnderflow
-    gekGlOutOfMemory
-    gekGlUnknownError
-    gekUnknownError
+import std/[options, sugar], nimgl/[glfw, opengl], ../utils
 
-  GfxError* = object of CatchableError
-    case kind: GfxErrorKind
-    of gekGlfwError:
-      glfwErrorDescription: string
-    of gekGlError:
-      glErrorDescription: string
-    else:
-      discard
+type GfxErrorKind* = enum
+  gekGlfwPlatformError
+  gekGlfwNotInitialized
+  gekGlfwInvalidEnum
+  gekGlfwInvalidValue
+  gekGlfwApiUnavailable
+  gekGlfwVersionUnavailable
+  gekGlfwFormatUnavailable
+  gekGlfwNoWindowContext
+  gekGlfwUnknownError
+  gekGlInvalidEnum
+  gekGlInvalidValue
+  gekGlInvalidOperation
+  gekGlStackOverflow
+  gekGlStackUnderflow
+  gekGlOutOfMemory
+  gekGlUnknownError
+  gekUnknownError
 
 const gekGlfwError* = {
   gekGlfwPlatformError, gekGlfwNotInitialized, gekGlfwInvalidEnum, gekGlfwInvalidValue,
@@ -37,6 +29,17 @@ const gekGlError* = {
   gekGlInvalidEnum, gekGlInvalidValue, gekGlInvalidOperation, gekGlStackOverflow,
   gekGlStackUnderflow, gekGlOutOfMemory, gekGlUnknownError,
 }
+
+type GfxError* = object of CatchableError
+  case kind: GfxErrorKind
+  of gekGlfwError:
+    glfwErrorDescription: string
+  of gekGlError:
+    glErrorDescription: string
+  else:
+    discard
+
+var lastError: Option[ref GfxError]
 
 func initFromGlfwError(self: var GfxError, code: sink int32, description: sink string) =
   let kind =
@@ -89,14 +92,15 @@ func initFromGlError(self: var GfxError, code: sink GLEnum) =
     else:
       unreachable()
 
-var lastError: ref GfxError
-
-proc gfxPromoteError() =
-  if lastError != nil:
-    let err = lastError
-    lastError = nil
+proc gfxPropagateError() =
+  if lastError.isSome:
+    let err = lastError.unsafeGet
+    lastError = none(ref GfxError)
     raise err
 
 proc glfwErrorCallback(code: int32, description: cstring) {.cDecl.} =
-  lastError.new
-  lastError[].initFromGlfwError(code, description)
+  lastError = some:
+    block:
+      let err = (ref GfxError)()
+      err[].initFromGlfwError(code, $description)
+      err

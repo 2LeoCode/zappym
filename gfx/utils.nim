@@ -41,13 +41,34 @@ func symToIdent(n: NimNode): NimNode =
   if n.kind == nnkSym:
     ident($n)
   elif n.len != 0:
-    unpackVarargs(newTree, n.kind, n.children.toSeq.mapIt(symToIdent it))
+    unpackVarargs(
+      newTree,
+      n.kind,
+      n.children.toSeq.map proc(it: NimNode): NimNode =
+        symToIdent it
+      ,
+    )
   else:
     n.copyNimNode
 
 template defineWrapperObject*(Name; WrappedType: typedesc[typed]) =
   type Name = object
     wrapped: WrappedType
+
+template `?.`*(obj: typed, field: typed): untyped =
+  if obj.isNil: nil else: obj.field
+
+template `!.`*(obj: typed, field: typed): untyped {.warning[StrictNotNil]: off.} =
+  obj.field
+
+template `?:`*(obj: typed, index: typed): untyped =
+  if obj.isNil:
+    nil
+  else:
+    obj[index]
+
+template `!:`*(obj: typed, index: typed): untyped {.warning[StrictNotNil]: off.} =
+  obj[index]
 
 macro ensureValidIdent(ident: typed): untyped =
   ident $ident
@@ -70,7 +91,7 @@ func newExceptionByNameExpr(msg: NimNode, expr: sink NimNode): NimNode =
     of nnkIfStmt:
       var children = collect:
         for branch in lastExpr[0 ..^ 2]:
-          newTree(nnkElifExpr, branch[0], newExceptionByNameExpr(msg, branch[1]))
+          newTree(nnkElifExpr, branch !: 0, newExceptionByNameExpr(msg, branch !: 1))
 
       children.add:
         let lastBranch = lastExpr[^1]
@@ -84,7 +105,7 @@ func newExceptionByNameExpr(msg: NimNode, expr: sink NimNode): NimNode =
       debugecho lastExpr.treeRepr
       var children = collect:
         for branch in lastExpr[1 ..^ 2]:
-          newTree(nnkOfBranch, branch[0], newExceptionByNameExpr(msg, branch[1]))
+          newTree(nnkOfBranch, branch !: 0, newExceptionByNameExpr(msg, branch !: 1))
 
       children.insert(lastExpr[0], 0)
       children.add:

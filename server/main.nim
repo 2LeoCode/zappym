@@ -74,7 +74,9 @@ func parseTeamNameSeq(value: string): TeamNameSeq =
   if "" in uniqueTeamNames:
     raise ValueError.newException "Empty team names are not allowed"
 
-  teamNames.mapIt TeamName($it)
+  collect:
+    for name in teamNames:
+      TeamName(name)
 
 let conf =
   try:
@@ -110,7 +112,11 @@ proc msz(self: GfxServer, gfx: Gfx) {.async.} =
 proc bct(self: GfxServer, gfx: Gfx, x: int, y: int) {.async.} =
   ## Get world tile contents
 
-  let contents = self.wrapped.getWorldTile(x, y).wrapped.mapIt($it).join(" ")
+  let contents = collect(
+    for tile in self.wrapped.getWorldTile(x, y).wrapped:
+      $tile
+  ).join " "
+
   await gfx.wrapped.send fmt "bct {x} {y} {contents}"
 
 proc mct(self: GfxServer, gfx: Gfx) {.async.} =

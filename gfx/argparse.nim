@@ -1,6 +1,6 @@
 import std/[strformat, options, macros, parseopt, sugar, sequtils, strutils, tables]
 
-template opt*(shortName = none[char]()): untyped {.pragma.}
+template opt*(shortName = none(char)): untyped {.pragma.}
 template arg*(): untyped {.pragma.}
 
 type CmdFieldKind = enum

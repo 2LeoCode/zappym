@@ -1,10 +1,13 @@
-import nimgl/[glfw, opengl], errors, std/[importutils]
+import nimgl/[glfw, opengl], context, errors {.all.}
 
 type Window = object
   title: string
   glfwWindow: GLFWWindow
 
 proc init*(self: var Window, width, height: sink uint, title: sink string) =
+  once:
+    initContext()
+
   self.title = title
 
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3)
@@ -14,14 +17,14 @@ proc init*(self: var Window, width, height: sink uint, title: sink string) =
   self.glfwWindow = glfwCreateWindow(width.int32, height.int32, title)
   self.glfwWindow.makeContextCurrent
 
-  privateAccess:
-    gfxPromoteError()
+  gfxPropagateError()
 
   if not glInit():
     let code = glGetError()
-    let error = new GfxError
 
+    var error = (ref GfxError)()
     error[].initFromGlError(code)
+
     raise error
 
 proc newWindow*(width, height: sink uint, title: sink string): Window =

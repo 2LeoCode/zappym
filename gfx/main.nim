@@ -1,4 +1,4 @@
-import argparse, utils, nimgl/[glfw, opengl], std/[strformat], shady, vmath
+import nimgl/[glfw, opengl], std/[strformat], shady, vmath, argparse, utils
 
 static:
   doAssert isMainModule, "This file is not a module"

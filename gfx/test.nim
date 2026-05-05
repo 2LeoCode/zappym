@@ -1,11 +1,10 @@
-import macros
+import macros, sequtils, sugar
 
-type Foo = object of RootObj
+dumpTree:
+  var c = 0
 
-type Bar = object of Foo
-
-let foo: ref Foo = Bar.new
-
-dumptree:
-  if foo of Bar:
+  proc foo(a: int, b: string) =
     echo "foo"
+    echo a
+    echo c
+    c = 42
