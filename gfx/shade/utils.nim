@@ -128,7 +128,7 @@ macro distinctVariants*(def: untyped): untyped =
         orig = selector[0]
         shadow = ident orig.strVal
 
-      result = copyNimTree(val)
+      result = copyNimTree(val[1])
 
       assert selector[1].strVal == `discriminantFieldName`
 
@@ -140,16 +140,12 @@ macro distinctVariants*(def: untyped): untyped =
           body = newStmtList(
             newTree(
               nnkLetSection,
-              newTree(
-                nnkIdentDefs,
-                newTree(nnkPragmaExpr, shadow, newTree(nnkPragma, ident "inject")),
-                newEmptyNode(),
-                newCall(Variant, orig),
-              ),
+              newTree(nnkIdentDefs, shadow, newEmptyNode(), newCall(Variant, orig)),
             ),
             body,
           )
-          br[1] = body
+
+      echo result.treeRepr
 
   var injectedCode = newTree(nnkStmtListType)
 
@@ -229,7 +225,6 @@ macro distinctVariants*(def: untyped): untyped =
   injectedCode.add(ident "void")
 
   result.add newTree(nnkTypeDef, genSym(nskType), newEmptyNode(), injectedCode)
-  echo result.treeRepr
 
 type NodeKind = enum
   nkA
