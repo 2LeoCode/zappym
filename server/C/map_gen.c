@@ -62,21 +62,16 @@ uint32_t **map_gen(const uint32_t length, const uint32_t height) {
         }
     }
 
-    int nb_cells_x = (float)length / 10.0f;
+    int nb_cells_x = length / 10.0f;
     nb_cells_x = (nb_cells_x > 0) ? nb_cells_x : 1; // Inutile si length forcément > 10 dans les arg
-    int nb_cells_y = (float)height / 10.0f;
+    int nb_cells_y = height / 10.0f;
     nb_cells_y = (nb_cells_y > 0) ? nb_cells_y : 1; // Inutile si height forcément > 10 dans les arg
     float cell_size_x = length / nb_cells_x;
     float cell_size_y = height / nb_cells_y;
     float current_cell_x = 0;
     float current_cell_y = 0;
 
-    int fd = open("/dev/random", O_RDONLY);
-    if (fd == -1) {
-        // to do : error management
-        return (NULL);
-    }
-
+    int fd = open("/dev/random", O_RDONLY); // to do : error management
 
     size_t seed = 0;
     t_point cur_rand = {0, 0};
@@ -89,9 +84,9 @@ uint32_t **map_gen(const uint32_t length, const uint32_t height) {
     for (int i = 0; i < nb_cells_y; i++) {
         for (int j = 0; j < nb_cells_x; j++) {
             random_gen(fd, &seed); // todo : error management
-            cur_rand.x = (seed & (uint32_t)0xFFFFFFFF) % (int)cell_size_x + current_cell_x;
-            cur_rand.y = (seed >> 16) % (int)cell_size_y + current_cell_y;
-            printf("base : %zx | first_half : %zx | second_half : %zx\n", seed, seed & (uint32_t)0xFFFFFFFF, seed >> 32);
+            cur_rand.x = (seed & (uint32_t)~0) % (int)cell_size_x + current_cell_x;
+            cur_rand.y = (seed >> 32) % (int)cell_size_y + current_cell_y;
+            printf("base : %zx | first_half : %zx | second_half : %zx\n", seed, seed & (uint32_t)~0, seed >> 32);
             resources[(i * (int)nb_cells_x + j)] = cur_rand;
             current_cell_x += cell_size_x;
         }
@@ -104,6 +99,7 @@ uint32_t **map_gen(const uint32_t length, const uint32_t height) {
         map[resources[i].y][resources[i].x] = '1';
     }
 
+    close(fd);
     free(resources);
     resources = NULL;
 
