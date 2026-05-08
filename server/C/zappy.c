@@ -14,10 +14,19 @@ int check_arg(char **argv) {
     return (0);
 }
 
-void print_map(uint32_t **map, uint32_t length, uint32_t height) {
+void print_map(t_tile_content *map, uint32_t length, uint32_t height) {
     for (uint32_t i = 0; i < height; i++) {
+        printf("|");
         for (uint32_t j = 0; j < length; j++) {
-            printf("%c", map[i][j]);
+            uint32_t found_idx = 0;
+
+            for (uint32_t k = 0; k < NB_RESOURCES_; k++) {
+                if (map[i * length + j].resources[k] != 0) {
+                    found_idx = k;
+                    break;
+                }
+            }
+            printf("%04d|", found_idx);
         }
         printf("\n");
     }
@@ -31,7 +40,7 @@ int main(int argc, char **argv) {
 
     uint32_t length = atoi(argv[1]);
     uint32_t height = atoi(argv[2]);
-    uint32_t **map = map_gen(length, height);
+    t_tile_content *map = map_gen(length, height);
     
     print_map(map, length, height);
 
