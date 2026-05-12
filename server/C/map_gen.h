@@ -25,7 +25,7 @@ typedef struct s_tile_content {
 } t_tile_content;
 
 
-t_tile_content *map_gen(const uint32_t length, const uint32_t height);
+t_tile_content *map_gen(const uint32_t width, const uint32_t height);
 void delete_map(t_tile_content **map);
 
 #endif

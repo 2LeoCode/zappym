@@ -87,17 +87,17 @@ proc typeString(n: NimNode): string =
       "ivec4"
     else:
       if n[0].repr == "array":
-        var length = 0
+        var width = 0
         if n[1].kind == nnkIntLit:
-          length = n[1].intVal.int
+          width = n[1].intVal.int
         elif n[1].kind == nnkBracketExpr and n[1].len == 3 and n[1][0].repr == "..":
           # array[0..1, T] case
-          length = n[1][2].intVal.int - n[1][1].intVal.int + 1
+          width = n[1][2].intVal.int - n[1][1].intVal.int + 1
         elif n[1].kind == nnkInfix and n[1].len == 3 and n[1][0].repr == "..":
           # array[0..1, T] case
-          length = n[1][2].intVal.int - n[1][1].intVal.int + 1
+          width = n[1][2].intVal.int - n[1][1].intVal.int + 1
 
-        if length == 2:
+        if width == 2:
           if n[2].repr == "uint16":
             "vec2"
           elif n[2].repr in ["uint32"]:
@@ -108,7 +108,7 @@ proc typeString(n: NimNode): string =
             "vec2"
           else:
             err "can't figure out type: " & n.repr, n
-        elif length == 3:
+        elif width == 3:
           if n[2].repr == "uint16":
             "vec3"
           elif n[2].repr in ["uint32"]:
@@ -119,7 +119,7 @@ proc typeString(n: NimNode): string =
             "vec3"
           else:
             err "can't figure out type: " & n.repr, n
-        elif length == 4:
+        elif width == 4:
           if n[2].repr == "uint16":
             "vec4"
           elif n[2].repr in ["uint32"]:
@@ -131,7 +131,7 @@ proc typeString(n: NimNode): string =
           else:
             err "can't figure out type: " & n.repr, n
         else:
-          typeString(n[1]) & '[' & $length & ']' # not sure about this
+          typeString(n[1]) & '[' & $width & ']' # not sure about this
       else:
         let baseType = n[0].repr
         let qualifier =
@@ -186,7 +186,7 @@ const glslFunctions = [
   "bool", "array", "vec2", "vec3", "vec4", "mat2", "mat3", "mat4", "Vec2", "Vec3",
   "Vec4", "mat2", "Mat3", "Mat4", "uvec2", "uvec3", "uvec4", "UVec2", "UVec3", "UVec4",
   "ivec2", "ivec3", "ivec4", "IVec2", "IVec3", "IVec4", "abs", "clamp", "min", "max",
-  "dot", "sqrt", "mix", "length", "texelFetch", "imageStore", "imageLoad", "texture",
+  "dot", "sqrt", "mix", "width", "texelFetch", "imageStore", "imageLoad", "texture",
   "textureSize", "textureGrad", "normalize", "floor", "ceil", "round", "exp",
   "inversesqrt", "[]", "[]=", "inverse", "sin", "cos", "tan", "pow", "fmod", "lessThan",
   "lessThanEqual", "greaterThan", "greaterThanEqual", "equal", "notEqual", "dFdx",
