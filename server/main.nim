@@ -20,7 +20,16 @@ type ItemKind = enum
   ikPhiras
   ikThystame
 
+type Orientation = enum
+  oNorth = 1
+  oEast
+  oSouth
+  oWest
+
 type PlayerLevel = distinct range[0 .. 6]
+type PlayerId = distinct uint
+
+func `==`(lhs: PlayerId, rhs: PlayerId): bool {.borrow.}
 
 type TeamName = distinct string
 
@@ -28,9 +37,22 @@ func hash(self: TeamName): Hash {.borrow.}
 func `==`(lhs: TeamName, rhs: TeamName): bool {.borrow.}
 func `$`(self: TeamName): string {.borrow.}
 
-defineWrapperObject(WorldTile, array[ItemKind, uint])
-
 type
+  WorldTile = object
+    resources: array[ItemKind, uint]
+
+  GfxClient = object
+    socket: AsyncSocket
+
+  Player = object
+    id: PlayerId
+    socket: AsyncSocket
+    team: ptr Team
+    position: Position
+    orientation: Orientation
+    level: PlayerLevel
+    inventory: array[ItemKind, uint]
+
   Config = object
     port {.opt.} = 4242
     width {.opt(shortName = some('x')).} = 2048
@@ -39,30 +61,23 @@ type
     startPlayerLimit {.opt(shortName = some('c')).} = 18
     timeUnit {.opt.} = 1
 
-  Player = ref object
-    team: Team
-    position: Position
-    socket: AsyncSocket
-    level: PlayerLevel
-    inventory: array[ItemKind, uint]
-
-  Team = ref object
-    name: TeamName
-    players: array[PLAYERS_PER_TEAM, Option[Player]]
+  Team = object
+    name: ptr TeamName
+    players: array[PLAYERS_PER_TEAM, Option[ptr Player]]
     births = 0
     deaths = 0
 
   Position = tuple[x: int, y: int]
   TeamNameSeq = seq[TeamName]
 
-  GameServer = ref object
+  GameServer = object
+    socket: AsyncSocket
+    playerCount: uint
     players: SinglyLinkedList[Player]
-    teams: ref Table[TeamName, Team]
+    removedPlayerIds: SinglyLinkedList[uint]
+    gfxClients: SinglyLinkedList[GfxClient]
+    teams: Table[TeamName, Team]
     world: seq[WorldTile]
-
-defineWrapperObject(Gfx, AsyncSocket)
-defineWrapperObject(GfxServer, GameServer)
-defineWrapperObject(PlayerServer, GameServer)
 
 func parseTeamNameSeq(value: string): TeamNameSeq =
   let teamNames = value.split(',')
@@ -85,46 +100,89 @@ let conf =
     echo fmt"Error: {e.msg}"
     quit(1)
 
-func playerCount(self: Team): int =
-  len:
-    collect:
-      for p in self.players:
-        if p.isSome:
-          true
+proc initGameServer(conf: Config): GameServer =
+  escalate ValueError:
+    let socket = newAsyncSocket()
+    socket.setSockOpt(OptReuseAddr, true)
+    socket.bindAddr Port(conf.port)
 
-func addPlayer(self: GameServer, socket: AsyncSocket, team: Team): Player =
-  let player = Player(team: team, socket: socket)
-  self.players.add(player)
+    GameServer(socket: socket, world: newSeq[WorldTile](conf.width * conf.height))
+
+var gameServer = initGameServer(conf)
+
+func playerCount(self: Team): int =
+  for p in self.players:
+    if p.isSome:
+      inc result
+
+proc addTeam(name: sink TeamName): Team =
+  gameServer.teams[name] = Team(name: addr name)
+
+proc addPlayer(socket: sink AsyncSocket, teamName: string): lent Player =
+  var id = PlayerId:
+    if gameServer.removedPlayerIds.head == nil:
+      gameServer.playerCount
+    else:
+      template head(): untyped =
+        gameServer.removedPlayerIds.head
+
+      defer:
+        head = head.next
+      head.value
+  var team = gameServer.teams[TeamName(teamName)]
   for p in team.players.mitems:
     if p.isNone:
-      p = some(player)
-      return p.get()
+      let player =
+        Player(id: id, team: addr gameServer.teams[TeamName(teamName)], socket: socket)
+      gameServer.players.add(player)
+
+      p = some(addr gameServer.players.tail.value)
+      return p.get[]
   raise Defect.newException "Team is full"
 
-proc getWorldTile(self: GameServer, x: int, y: int): lent WorldTile =
-  self.world[y * conf.width + x]
+proc getPlayer(id: PlayerId): lent Player =
+  for p in gameServer.players:
+    if p.id == id:
+      return p
+  raise Defect.newException "Player not found"
 
-proc msz(self: GfxServer, gfx: Gfx) {.async.} =
+proc removePlayer(id: PlayerId) =
+  var
+    node = gameServer.players.head
+    parent: SinglyLinkedNode[Player]
+
+  while node != nil:
+    if node.value.id == id:
+      if parent == nil:
+        gameServer.players.head = node.next
+      else:
+        parent.next = node.next
+    parent = node
+    node = node.next
+
+proc getWorldTile(x: int, y: int): lent WorldTile =
+  gameServer.world[y * conf.width + x]
+
+proc msz(gfx: GfxClient) {.async.} =
   ## Get world size
 
-  await gfx.wrapped.send fmt "msz {conf.width} {conf.height}\n"
+  await gfx.socket.send fmt "msz {conf.width} {conf.height}\n"
 
-proc bct(self: GfxServer, gfx: Gfx, x: int, y: int) {.async.} =
+proc bct(gfx: GfxClient, x: int, y: int) {.async.} =
   ## Get world tile contents
 
   let contents = collect(
-    for tile in self.wrapped.getWorldTile(x, y).wrapped:
+    for tile in getWorldTile(x, y).resources:
       $tile
   ).join " "
 
-  await gfx.wrapped.send fmt "bct {x} {y} {contents}"
+  await gfx.socket.send fmt "bct {x} {y} {contents}"
 
-proc mct(self: GfxServer, gfx: Gfx) {.async.} =
+proc mct(gfx: GfxClient) {.async.} =
   ## Get all world tile contents
 
-  let
-    bctChunkSize = 16
-    area = conf.width * conf.height
+  const bctChunkSize = 16
+  let area = conf.width * conf.height
   var i = 0
 
   while i < area:
@@ -134,14 +192,50 @@ proc mct(self: GfxServer, gfx: Gfx) {.async.} =
           i = i + j
           y = int(i / conf.width)
           x = i - y * conf.width
-          content = self.wrapped.world[i].mapIt($it).join(" ")
+          content = gameServer.world[i].mapIt($it).join(" ")
 
-        fmt"bct {x} {y} {content}"
+        fmt "bct {x} {y} {content}"
 
-    await gfx.wrapped.send chunk.join("\n") & "\n"
+    await gfx.socket.send chunk.join("\n") & "\n"
     i += bctChunkSize
 
-proc handleGfxConnection(server: GameServer, client: AsyncSocket) {.async.} =
+proc tna(gfx: GfxClient) {.async.} =
+  ## Get team names
+
+  const tnaChunkSize = 16
+
+  var
+    chunk: array[tnaChunkSize, string]
+    i: int
+  for name in gameServer.teams.keys:
+    chunk[i] = fmt "tna {name}"
+    inc i
+    if i == tnaChunkSize:
+      await gfx.socket.send chunk.join("\n") & "\n"
+      i = 0
+  if i != tnaChunkSize:
+    await gfx.socket.send chunk[0 ..< i].join("\n") & "\n"
+
+proc pnw(gfx: GfxClient, player: Player) {.async.} =
+  ## New player connection
+
+  let
+    id = player.team[].players.findIt(it.id == player.id)
+    (posX, posY) = player.position
+    orientation = ord player.orientation
+    level = player.level
+    teamName = player.team[].name[]
+
+  await gfx.socket.send fmt "pnw #{id} {posX} {posY} {orientation} {level} {teamName}\n"
+
+proc ppo(gfx: GfxClient, playerId: PlayerId) =
+  ## Get player position and orientation
+
+  let player = getPlayer(playerId)
+
+  await gfx.socket.send fmt "ppo {player.pos.x} {player.pos.y} {player.orientation}\n"
+
+proc handleGfxConnection(client: AsyncSocket) {.async.} =
   block:
     let tnaContent = conf.teamNames.join " "
     await:
@@ -154,19 +248,18 @@ proc handleGfxConnection(server: GameServer, client: AsyncSocket) {.async.} =
             tna {tnaContent}
             """
 
-  let gfxServer = GfxServer(wrapped: server)
-  let gfx = Gfx(wrapped: client)
+  let gfx = GfxClient(socket: client)
 
-  await gfxServer.mct(gfx)
+  await gfx.mct()
   while true:
     # gfx loop
     discard
 
-proc handlePlayer(server: PlayerServer, player: var Player) =
+proc handlePlayer(player: var Player) =
   while true:
     discard
 
-proc handlePlayerConnection(server: GameServer, client: AsyncSocket) {.async.} =
+proc handlePlayerConnection(client: AsyncSocket) {.async.} =
   let teamNameRaw = await client.recvLine
   let teamName = TeamName(teamNameRaw)
 
@@ -177,9 +270,9 @@ proc handlePlayerConnection(server: GameServer, client: AsyncSocket) {.async.} =
 
   endConnectionIf teamName notin conf.teamNames
 
-  let team = server.teams[teamName]
+  let team = addr(gameServer.teams[teamName])
 
-  let nbClients = PLAYERS_PER_TEAM - team.playerCount
+  let nbClients = PLAYERS_PER_TEAM - team[].playerCount
 
   endConnectionIf nbClients == 0
 
@@ -192,34 +285,27 @@ proc handlePlayerConnection(server: GameServer, client: AsyncSocket) {.async.} =
           {conf.width} {conf.height}
           """
 
-  var player = server.addPlayer(client, team)
+  var player = addPlayer(client, team)
 
-  PlayerServer(wrapped: server).handlePlayer(player)
+  handlePlayer(player)
 
-proc handleClient(gameServer: GameServer, client: AsyncSocket) {.async.} =
+proc handleClient(client: AsyncSocket) {.async.} =
   await client.send "BIENVENUE\n"
 
   let res = await client.recvLine
   if res == "GRAPHICS":
-    await handleGfxConnection(gameServer, client)
+    await handleGfxConnection(client)
   elif res == "PLAYER":
-    await handlePlayerConnection(gameServer, client)
+    await handlePlayerConnection(client)
   else:
     client.close
 
-proc runServer(conf: Config) {.async.} =
-  escalate ValueError:
-    let server = newAsyncSocket()
-    server.setSockOpt(OptReuseAddr, true)
-    server.bindAddr Port(conf.port)
+proc startServer() {.async.} =
+  gameServer.socket.listen
 
-    let gameServer = GameServer(world: newSeq[WorldTile](conf.width * conf.height))
-
-    server.listen
-
-    while true:
-      let client = await server.accept
-      asyncCheck handleClient(gameServer, client)
+  while true:
+    let client = await gameServer.socket.accept
+    asyncCheck handleClient(client)
 
 setControlCHook:
   proc() {.noconv.} =
@@ -227,6 +313,6 @@ setControlCHook:
     quit(1)
 
 try:
-  waitFor runServer(conf)
+  waitFor startServer()
 except CatchableError as e:
   echo fmt"Error: {e.msg}"

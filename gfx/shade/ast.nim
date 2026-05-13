@@ -1,284 +1,436 @@
-import primitives, std/[strformat, tables, sequtils]
+import primitives, utils, std/[strformat, tables, sequtils, strutils, sugar]
 
 type
-  GLIdent* = object
+  Ident = object
     id: uint
     name: string
 
-  GLNodeKind* = enum
-    glkEmpty
-    glkIdent
-    glkBoolLit
-    glkIntLit
-    glkUIntLit
-    glkFloatLit
-    glkDoubleLit
-    glkStmtList
-    glkQualList
-    glkVarDefs
-    glkAsgnExpr
-    glkPrefix
-    glkPostfix
-    glkInfix
-    glkIndex
-    glkDotExpr
-    glkCall
-    glkArgList
-    glkFuncDef
-    glkStructDef
-    glkTernary
-    glkIfStmt
-    glkElifBranch
-    glkElseBranch
-    glkSwitchStmt
-    glkCaseBranch
-    glkDefaultBranch
-    glkForStmt
-    glkWhileStmt
-    glkDoWhileStmt
-    glkInitList
-    glkBlockStmt
-    glkStorageBlockDef
-    glkPPVersion
-    glkPPLine
-    glkPPDef
-    glkPPUndef
-    glkPPIf
-    glkPPElifDef
-    glkPPElif
-    glkPPElse
-    glkPPPragma
-    glkPPGlue
-    glkPPStr
-    glkPPTok
-    glkPPDefined
-    glkPPParams
+  NodeKind* = enum
+    nkEmpty
+    nkIdent
+    nkBoolLit
+    nkIntLit
+    nkUIntLit
+    nkFloatLit
+    nkDoubleLit
+    nkStmtList
+    nkQualList
+    nkVarDefs
+    nkPrefix
+    nkPostfix
+    nkInfix
+    nkIndex
+    nkDotExpr
+    nkCall
+    nkFuncDef
+    nkParams
+    nkReturn
+    nkBreak
+    nkContinue
+    nkStructDef
+    nkTernary
+    nkIfStmt
+    nkElifBranch
+    nkElseBranch
+    nkSwitchStmt
+    nkCaseBranch
+    nkDefaultBranch
+    nkForStmt
+    nkWhileStmt
+    nkDoWhileStmt
+    nkInitList
+    nkBlockStmt
+    nkStorageBlockDef
+    nkPPVersion
+    nkPPLine
+    nkPPDef
+    nkPPUndef
+    nkPPIf
+    nkPPElifDef
+    nkPPElif
+    nkPPElse
+    nkPPPragma
+    nkPPGlue
+    nkPPStr
+    nkPPTok
+    nkPPDefined
+    nkPPParams
 
-  GLNode* = object
-    case kind*: GLNodeKind
-    of glkIdent:
-      identVal: GLIdent
-    of glkBoolLit:
+  Node* = object
+    case kind*: NodeKind
+    of nkIdent:
+      identVal: Ident
+    of nkBoolLit:
       boolVal*: Bool
-    of glkIntLit:
+    of nkIntLit:
       intVal*: Int
-    of glkUIntLit:
+    of nkUIntLit:
       uintVal*: UInt
-    of glkFloatLit:
+    of nkFloatLit:
       floatVal*: Float
-    of glkDoubleLit:
+    of nkDoubleLit:
       doubleVal*: Double
-    of glkPPTok:
+    of nkPPTok:
       pptokText*: string
+    of nkEmpty, nkBreak, nkContinue:
+      discard
     else:
-      children*: seq[GLNode]
+      children*: seq[Node]
 
-const glkLiterals* = {glkBoolLit, glkIntLit, glkUIntLit, glkFloatLit, glkDoubleLit}
-const glkInlineExpr* =
-  glkLiterals + {
-    glkAsgnExpr, glkPrefix, glkPostfix, glkInfix, glkIndex, glkDotExpr, glkCall,
-    glkTernary,
-  }
-const glkPPExpr* = {glkPPGlue, glkPPStr, glkPPTok}
+generateStrictUnionOps Node
+
+type LitNode* = BoolLitNode or IntLitNode or FloatLitNode or DoubleLitNode
+type ExprNode* =
+  LitNode or PrefixNode or PostfixNode or InfixNode or IndexNode or DotExprNode or
+  CallNode or TernaryNode or IdentNode
+
+type PPExprNode* = PPGlueNode or PPStrNode or PPTokNode
+
+const nkLiterals* = {nkBoolLit, nkIntLit, nkUIntLit, nkFloatLit, nkDoubleLit}
+const nkExpr* =
+  nkLiterals +
+  {nkPrefix, nkPostfix, nkInfix, nkIndex, nkDotExpr, nkCall, nkTernary, nkIdent}
+const nkPPExpr* = {nkPPGlue, nkPPStr, nkPPTok}
 
 using
-  kind: GLNodeKind
-  node: GLNode
-  nodes, children: varargs[GLNode]
+  kind: NodeKind
+  node: Node
+  nodes, children: varargs[Node]
   name, text: string
   names: varargs[string]
 
-proc `$`(kind): string {.memo.} =
-  self.repr.removePrefix("glk")
+proc `$`(kind: NodeKind): string {.memo.} =
+  kind.repr.dup(removePrefix("nk"))
 
-proc getIdent(name): GLIdent {.memo.} =
+proc getIdent(name): Ident {.memo.} =
   var id {.global.} = 0u
   defer:
     inc id
 
-  GLIdent(id: id, name: name)
-
-func glNode*(kind): GLNode =
-  glTree(kind)
+  Ident(id: id, name: name)
 
 func expectKind*(
-    self, kind, msg = fmt "{astToStr(self)} is {self.kind}, but expected {kind}"
+    self: Node,
+    kinds: set[NodeKind],
+    msg = fmt "{astToStr(self)} is {self.kind}, but expected either {kinds.mapIt($it).join(\" or \")}",
+) =
+  assert(self.kind in kinds, msg)
+
+func expectKind*(
+    self: Node, kind; msg = fmt "{astToStr(self)} is {self.kind}, but expected {kind}"
 ) =
   self.expectKind({kind}, msg)
 
-func expectKind*(
-    self: GLNode,
-    kinds: set[GLNodeKind],
-    msg = fmt "{astToStr(self)} is {self.kind}, but expected either {kinds.mapIt($it).join(\" or \")}",
-) =
-  assert(self in kinds, msg)
-
-func add*(self: var GLNode, nodes) =
+proc add*(self: var Node, nodes) =
   when nodes.varargsLen != 0:
-    self.expectKind(domain(GLNodeKind) - glkLiterals - {glkIdent})
+    self.expectKind(domain(NodeKind) - nkLiterals - {nkIdent})
     self.children.add(nodes)
 
-template add*(self: var GLNode, nodes: iterable[GLNode]) =
-  self.add(nodes.toSeq)
+template add*(self: var Node, nodes: iterable[Node]) =
+  for node in nodes:
+    self.children.add(node)
 
-template glTree*(kind: GLNodeKind, children: iterable[GLNode]): GLNode =
-  result = GLNode(kind: kind)
+template initTree*(kind: NodeKind, children: iterable[Node]): Node =
+  result = Node(kind: kind)
   result.add(children)
 
-func glTree*(kind, children): GLNode =
-  result = GLNode(kind: kind)
+proc initTree*(kind, children): Node =
+  result = Node(kind: kind)
   result.add(children)
 
-func glEmpty*(): GLNode =
-  glTree(glkEmpty)
+func initNode*(kind): Node =
+  Node(kind: kind)
 
-proc glIdent*(name): GLNode =
-  GLNode(kind: glkIdent, identVal: getIdent(name))
+proc initIdentNode*(name): IdentNode =
+  initIdentNode(getIdent(name))
 
-proc ensureIdent(name): GLNode =
-  glIdent(name)
+proc initIdentNode*(other: IdentNode): IdentNode =
+  other
 
-func ensureIdent(node): lent GLNode =
-  node.expectKind(glkIdent)
-  node
+func initLitNode*(value: Bool): BoolLitNode =
+  initBoolLitNode(value)
 
-func glLit*(value: Bool): GLNode =
-  GLNode(kind: glkBoolLit, boolVal: value)
+func initLitNode*(value: Int): IntLitNode =
+  initIntLitNode(value)
 
-func glLit*(value: Int): GLNode =
-  GLNode(kind: glkIntLit, intVal: value)
+func initLitNode*(value: UInt): UIntLitNode =
+  initUIntLitNode(value)
 
-func glLit*(value: UInt): GLNode =
-  GLNode(kind: glkUIntLit, uintVal: value)
+func initLitNode*(value: Float): FloatLitNode =
+  initFloatLitNode(value)
 
-func glLit*(value: Float): GLNode =
-  GLNode(kind: glkFloatLit, floatVal: value)
+func initLitNode*(value: Double): DoubleLitNode =
+  initDoubleLitNode(value)
 
-func glLit*(value: Double): GLNode =
-  GLNode(kind: glkDoubleLit, doubleVal: value)
+func initLitNode*[T: LitNode](other: T): T =
+  other
 
-func ensureLit(value: Primitive) =
-  glLit(value)
+func initStmtListNode*(children: varargs[Node]): StmtListNode
 
-func ensureLit(node): lent GLNode =
-  node.expectKind(glkLiterals)
-  node
+proc flattened*(self: StmtListNode): StmtListNode =
+  result = initStmtListNode()
+  for node in self.children:
+    var nodes = @[node]
+    node.ifStmtListNode:
+      nodes = node.flattened.children
+    cast[ptr Node](addr result)[].add(nodes)
 
-iterator stmtListFlatten(nodes): GLNode =
-  for child in chilren:
-    if child.kind == glkStmtList:
-      yield glStmtListFlatten(child.children)
-    else:
-      yield child
+proc flatten*(self: var StmtListNode) =
+  self = self.flattened
 
-func glStmtList*(children): GLNode =
-  glTree(glkStmtList, stmtListFlatten(children))
+func initStmtListNode*(children: varargs[Node]): StmtListNode =
+  initStmtListNode(children.toSeq)
 
-template glStmtList*(children: iterable): GLNode =
-  glStmtList(children.toSeq)
+template initStmtListNode*(children: iterable[Node]): StmtListNode =
+  initStmtListNode(children.toSeq)
 
-    # glkAsgnExpr
-    # glkPrefix
-    # glkPostfix
-    # glkInfix
-    # glkIndex
-    # glkDotExpr
-    # glkCall
-    # glkArgList
-    # glkFuncDef
-    # glkStruct
+func initQualNode*(qual: string or IdentNode): IdentNode =
+  initIdentNode(qual)
 
-func glQualList*(qualifiers: varargs[GLNode]): GLNode =
-  result = glTree(glkQualList)
-  when not defined(danger):
-    for qual in qualifiers:
-      qual.expectKind {glkIdent, glkCall}
-  result.add(qualifiers)
+func initQualNode*(qual: CallNode): CallNode =
+  qual
 
-proc glQualList*(qualifiers: varargs[string]): GLNode =
-  glQualList(qualifiers.map(glIdent))
+func initQualListNode*(qualifiers: varargs[Node, initQualNode]): QualListNode =
+  initQualListNode(qualifiers.toSeq)
 
-template glQualList*(qualifiers: iterable[string or GLNode]): GLNode =
-  glQualList(qualifiers.toSeq)
+template initQualListNode*(qualifiers: iterable[typed]): QualListNode =
+  result = initQualListNode(@[])
+  for qual in qualifiers:
+    result.add(initQualNode(qual))
 
-proc ensureQualList(qualifiers: openArray[string or GLNode]): GLNode =
-  glQualList(qualifiers)
+func initQualListNode*(other: QualListNode): QualListNode =
+  other
 
-func ensureQualList(node): lent GLNode =
-  node.expectKind(glkQualList)
-  node
-
-func glVarDefs*(
-    typ: string or GLNode,
-    qualifiers: openArray[string or GLNode] or GLNode,
-    varNames: varargs[string or GLNode],
-): GLNode =
-  glTree(
-    glkVarDefs, ensureIdent(typ), ensureQualList(qualifiers), varNames.map(ensureIdent)
+proc initVarDefsNode*(
+    typeVal: string or IdentNode,
+    qualifiers: QualListNode,
+    varNames: varargs[Node, initIdentNode],
+): VarDefsNode =
+  initVarDefsNode(
+    @[initIdentNode(typeVal).toNode, qualifiers] & varNames & @[initEmptyNode().toNode]
   )
 
-proc glPPVersion*(version: Uint or GLNode, profileOpt: string or GLNode): GLNode =
-  glTree(glkPPVersion, ensureLit(version), ensureIdent(profileOpt))
+proc initVarDefsNode*(
+    typeVal: string or IdentNode,
+    qualifiers: QualListNode,
+    varNames: openArray[string or IdentNode],
+    val: ExprNode,
+): VarDefsNode =
+  initVarDefsNode(
+    @[initIdentNode(typeVal).toNode, qualifiers] &
+      varNames.map((n) => initIdentNode(n).toNode) & @[val.toNode]
+  )
 
-func glPPLine*(lineNo: Uint or GLNode): GLNode =
-  glTree(glkPPLine, ensureLit(lineNo))
+proc initExprNode*(other: ExprNode): ExprNode =
+  other
 
-func glPPTok*(text): GLNode =
-  GLNode(kind: glkPPTok, pptokText: text)
+proc initPrefixNode*(op: string or IdentNode, expr: ExprNode): PrefixNode =
+  initPrefixNode(@[initIdentNode(op).toNode, expr])
 
-func glPPGlue*(lhs, rhs: GLNode): GLNode =
-  lhs.expectKind {glkPPTok, glkPPGlue}
-  rhs.expectKind {glkPPTok, glkPPGlue}
-  glTree(glkPPGlue, lhsPPExpr, rhsPPExpr)
+proc initPostfixNode*(expr: ExprNode, op: string or IdentNode): PostfixNode =
+  initPostfixNode(@[expr.toNode, initIdentNode(op)])
 
-func glPPStr*(tok: GLNode): GLNode =
-  tok.expectKind {glkPPTok}
-  glTree(glkPPStr, tok)
+proc initInfixNode*(lhs: ExprNode, op: string or IdentNode, rhs: ExprNode): InfixNode =
+  initInfixNode(@[lhs.toNode, initIdentNode(op), rhs])
 
-proc glPPParams*(params: varargs[string or GLNode]): GLNode =
-  let paramIdents = params.map(ensureIdent)
-  glTree(glkPPParams, paramIdents)
+proc initIndexNode*(expr, id: ExprNode, ids: varargs[ExprNode]): IndexNode =
+  initIndexNode:
+    if ids.len == 0:
+      @[expr.toNode, id]
+    else:
+      @[expr.toNode, initIndexNode(id, ids[0], ids[1 .. ^1])]
 
-proc ensurePPParams(params: openArray[string or GLNode]) =
-  glPPParams(params)
+proc initDotExprNode*(
+    expr: ExprNode, field: string or IdentNode, fields: varargs[Node, initIdentNode]
+): DotExprNode =
+  initDotExprNode(@[expr.toNode, initIdentNode(field)] & fields)
 
-proc ensurePPParams(node): GLNode =
-  node.expectKind {glkPPParams, glkEmpty}
-  node
+proc initCallNode*(
+    fn: string or IdentNode, args: varargs[Node, initExprNode]
+): CallNode =
+  initCallNode(@[fn.toNode] & args)
 
-proc glPPDef*(
-    name: string or GLNode, params: openArray[string or GLNode] or GLNode, body: GLNode
-): GLNode =
-  body.expectKind(glkPPExpr)
-  glPPDef(ensureIdent(name), ensurePPParams(params), body)
+func initParamsNode*(defs: varargs[VarDefsNode]) =
+  initParamsNode(defs.map(toNode).toSeq)
 
-func glPPUndef*(name: string or GLNode) =
-  glTree(glkPPUndef, ensureIdent(name))
+proc initFuncDefNode*(
+    name: string or IdentNode,
+    retType: IdentNode,
+    params: openArray[VarDefsNode] or ParamsNode,
+    body: varargs[Node] or StmtListNode,
+): FuncDefNode =
+  initFuncDefsNode(
+    @[
+      initIdentNode(name).toNode,
+      retType,
+      initParamsNode(params),
+      initStmtListNode(body),
+    ]
+  )
 
-func glPPIf*(elifBranches: openArray[GLNode], elseBranch: GLNode = glEmpty()): GLNode =
-  when not defined(danger):
-    elifBranches.applyIt(it.expectKind(glkPPElif))
-  result = glTree(glkPPIf, elifBranches)
-  if elseBranch.kind != glkEmpty:
-    elseBranch.expectKind(glkPPElse)
-    result.add(elseBranch)
+proc initStructDefNode*(
+    name: string or IdentNode, fields: varargs[VarDefsNode]
+): StructDefNode =
+  initStructDefNode(@[initIdentNode(name).toNode] & fields.map(toNode).toSeq)
 
-func glPPIfdef*(
-    elifDefBranch: GLNode,
-    elifBranches: openArray[GLNode],
-    elseBranch: GLNode = glEmpty(),
-): GLNode =
-  elifDefBranch.expectKind(glkPPElifDef)
-  when not defined(danger):
-    elifBranches.applyIt(it.expectKind(glkPPElif))
-  result = glTree.unpackVarargs(glkPPIf, defBranch, elifBranches)
-  if elseBranch.kind != glkEmpty:
-    elseBranch.expectKind(glkPPElse)
-    result.add(elseBranch)
+func initIfStmtNode*(elifBranches: varargs[ElifBranchNode]): IfStmtNode =
+  initIfStmtNode(elifBranches.map(toNode).toSeq & @[initEmptyNode().toNode])
 
-func glPPElif*(pred: GLNode, body: GLNode): GLNode =
-  pred.expectKind(glkInlineExpr)
-  glTree(glkPPElif, pred, glStmtList(body))
+func initIfStmtNode*(
+    elifBranches: openArray[ElifBranchNode], elseBranch: ElseBranchNode
+): IfStmtNode =
+  initIfStmtNode(elifBranches.map(toNode).toSeq & @[elseBranch.toNode])
 
-func glPPElse*(body: GLNode): GLNode =
-  glTree(glkPPElse, glStmtList(body))
+func initElifBranchNode*(
+    pred: ExprNode, body: varargs[Node] or StmtListNode
+): ElifBranchNode =
+  initElifBranchNode(@[pred.toNode, initStmtListNode(body)])
+
+func initElseBranchNode*(body: varargs[Node] or StmtListNode): ElseBranchNode =
+  initElseBranchNode(@[initStmtListNode(body).toNode])
+
+func initReturnNode*(): ReturnNode =
+  initReturnNode(@[initEmptyNode().toNode])
+
+func initReturnNode*(val: ExprNode): ReturnNode =
+  initReturnNode(@[val.toNode])
+
+func initSwitchStmtNode*(
+    val: ExprNode, caseBranches: varargs[CaseBranchNode]
+): SwitchStmtNode =
+  initSwitchStmtNode(
+    @[val.toNode] & caseBranches.map(toNode).toSeq & @[initEmptyNode().toNode]
+  )
+
+func initSwitchStmtNode*(
+    val: ExprNode,
+    caseBranches: openArray[CaseBranchNode],
+    defaultBranch: DefaultBranchNode,
+): SwitchStmtNode =
+  initSwitchStmtNode(
+    @[val.toNode] & caseBranches.map(toNode).toSeq & @[defaultBranch.toNode]
+  )
+
+func initCaseBranchNode*(
+    valRef: ExprNode, body: varargs[Node] or StmtListNode
+): CaseBranchNode =
+  initCaseBranchNode(@[valRef.toNode, initStmtListNode(body)])
+
+func initDefaultBranchNode*(body: varargs[Node] or StmtListNode): DefaultBranchNode =
+  initDefaultBranchNode(@[initStmtListNode(body).toNode])
+
+func initForStmtNode*(
+    initExpr: VarDefsNode,
+    cond: ExprNode,
+    updateExpr: Node,
+    body: varargs[Node] or StmtListNode,
+): ForStmtNode =
+  initForStmtNode(@[initExpr.toNode, cond, updateExpr, initStmtListNode(body)])
+
+func initWhileStmtNode*(
+    cond: ExprNode, body: varargs[Node] or StmtListNode
+): WhileStmtNode =
+  initWhileStmtNode(@[cond.toNode, initStmtListNode(body)])
+
+func initDoWhileStmtNode*(
+    body: openArray[Node] or StmtListNode, cond: ExprNode
+): DoWhileStmtNode =
+  initDoWhileStmtNode(@[initStmtListNode(body).toNode, cond])
+
+func initBlockStmtNode*(body: varargs[Node] or StmtListNode): BlockStmtNode =
+  initBlockStmtNode(@[initStmtListNode(body).toNode])
+
+proc initStorageBlockInstanceNode*(name: string or IdentNode): IdentNode =
+  initIdentNode(name)
+
+proc initStorageBlockInstanceNode*(idx: IndexNode): IndexNode =
+  idx
+
+proc initStorageBlockDefNode*(
+    name: string or IdentNode,
+    instance: string or IdentNode or IndexNode,
+    qualifiers: QualListNode,
+    fields: varargs[VarDefsNode],
+): StorageBlockDefNode =
+  initStorageBlockDefNode(
+    @[initIdentNode(name).toNode, initStorageBlockInstanceNode(instance), qualifiers] &
+      fields.map(toNode).toSeq
+  )
+
+func initPPVersionNode*(
+    version: UInt or UIntLitNode, profileOpt: string or IdentNode
+): PPVersionNode =
+  initPPVersionNode(@[initLitNode(version).toNode, initIdentNode(profileOpt)])
+
+func initPPLineNode*(lineNo: Uint or Node): PPLineNode =
+  initPPLineNode(@[initLitNode(lineNo).toNode])
+
+func initPPGlueNode*(
+    lhs: PPTokNode or PPGlueNode, rhs: PPTokNode or PPGlueNode
+): PPGlueNode =
+  initPPGlueNode(@[lhs.toNode, rhs])
+
+proc initPPStrNode*(ident: IdentNode): PPStrNode =
+  initPPStrNode(@[ident.toNode])
+
+proc initPPParamsNode*(params: varargs[Node, initIdentNode]): PPParamsNode =
+  initPPParamsNode(params.map(toNode).toSeq)
+
+func initPPParamsNode*(other: PPParamsNode): PPParamsNode =
+  other
+
+func initPPExprNode*(other: PPExprNode): PPExprNode =
+  expr
+
+proc initPPDefNode*(
+    name: string or IdentNode,
+    params: openArray[string or IdentNode] or PPParamsNode,
+    body: varargs[Node, initPPExprNode],
+): PPDefNode =
+  initPPDefNode(@[initIdentNode(name).toNode, initPPParamsNode(params)] & body)
+
+proc initPPDefNode*(
+    name: string or IdentNode, body: varargs[Node, initPPExprNode]
+): PPDefNode =
+  initPPDefNode(@[initIdentNode(name).toNode, initEmptyNode()] & body)
+
+proc initPPUndefNode*(name: string or IdentNode): PPUndefNode =
+  initPPUndefNode(@[initIdentNode(name).toNode])
+
+proc initPPElifDefNode*(
+    name: string or IdentNode, body: varargs[Node, initPPExprNode]
+): PPElifDefNode =
+  initPPElifDefNode(@[initIdentNode(name).toNode] & body)
+
+func initPPElifNode*(
+    pred: InlineExprNode, body: varargs[Node, initPPExprNode]
+): PPElifNode =
+  initPPElifNode(@[pred.toNode] & body)
+
+func initPPIfNode*(
+    elifBranches: openArray[PPElifNode], elseBranch: PPElseNode
+): PPIfNode =
+  initPPIfNode(elifBranches.map(toNode).toSeq & @[elseBranch.toNode])
+
+func initPPIfNode*(elifBranches: varargs[PPElifNode, initPPElifNode]): PPIfNode =
+  initPPIfNode(elifBranches.map(toNode).toSeq)
+
+func initPPIfNode*(
+    elifDefBranch: PPElifDefNode,
+    elifBranches: openArray[PPElifNode],
+    elseBranch: PPElseNode,
+): PPIfNode =
+  initPPIfNode(
+    @[elifDefBranch.toNode] & elifBranches.map(toNode).toSeq & @[elseBranch.toNode]
+  )
+
+func initPPIfNode*(
+    elifDefBranch: PPElifDefNode, elifBranches: varargs[Node, initPPElifNode]
+): PPIfNode =
+  initPPIfNode(@[elifDefBranch.toNode] & elifBranches)
+
+func initPPElseNode*(body: varargs[Node, initPPExprNode]): PPElseNode =
+  initPPElseNode(@[body.toNode])
+
+func initPPPragmaNode*(pragmas: varargs[Node, initPPExprNode]): PPPragmaNode =
+  initPPPragmaNode(pragmas.toSeq)
