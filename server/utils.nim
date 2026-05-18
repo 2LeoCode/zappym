@@ -1,4 +1,4 @@
-import std/[macros, strutils, sugar, sequtils]
+import std/[macros, strutils, sugar, sequtils, options]
 
 macro yieldFrom*(iter: untyped): untyped =
   quote:
@@ -45,9 +45,15 @@ func symToIdent(n: NimNode): NimNode =
   else:
     n.copyNimNode
 
-template defineWrapperObject*(Name; WrappedType: typedesc[typed]) =
-  type Name = object
-    wrapped: WrappedType
+template isSomeAnd*(opt: Option, cb: typed): bool =
+  opt.isSome and cb(opt.unsafeGet)
+
+template isSomeAndIt*(opt: Option, expr): bool =
+  opt.isSome and (
+    block:
+      let it {.inject.} = opt.unsafeGet
+      expr
+  )
 
 # macro wrapperObject*(WrappedType: typedesc[typed]) =
 #   newTree(

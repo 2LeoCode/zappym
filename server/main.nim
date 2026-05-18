@@ -27,9 +27,13 @@ type Orientation = enum
   oWest
 
 type PlayerLevel = distinct range[0 .. 6]
+
+func `$`(self: PlayerLevel): string {.borrow.}
+
 type PlayerId = distinct uint
 
-func `==`(lhs: PlayerId, rhs: PlayerId): bool {.borrow.}
+func `==`(lhs, rhs: PlayerId): bool {.borrow.}
+func `$`(self: PlayerId): string {.borrow.}
 
 type TeamName = distinct string
 
@@ -45,7 +49,6 @@ type
     socket: AsyncSocket
 
   Player = object
-    id: PlayerId
     socket: AsyncSocket
     team: ptr Team
     position: Position
@@ -63,7 +66,7 @@ type
 
   Team = object
     name: ptr TeamName
-    players: array[PLAYERS_PER_TEAM, Option[ptr Player]]
+    players: array[PLAYERS_PER_TEAM, ref Player]
     births = 0
     deaths = 0
 
@@ -72,9 +75,8 @@ type
 
   GameServer = object
     socket: AsyncSocket
-    playerCount: uint
-    players: SinglyLinkedList[Player]
-    removedPlayerIds: SinglyLinkedList[uint]
+    players: seq[ref Player]
+    removedPlayerIds: SinglyLinkedList[PlayerId]
     gfxClients: SinglyLinkedList[GfxClient]
     teams: Table[TeamName, Team]
     world: seq[WorldTile]
@@ -112,16 +114,18 @@ var gameServer = initGameServer(conf)
 
 func playerCount(self: Team): int =
   for p in self.players:
-    if p.isSome:
+    if p != nil:
       inc result
 
 proc addTeam(name: sink TeamName): Team =
   gameServer.teams[name] = Team(name: addr name)
 
-proc addPlayer(socket: sink AsyncSocket, teamName: string): lent Player =
-  var id = PlayerId:
+proc addPlayer(socket: sink AsyncSocket, teamName: TeamName): PlayerId =
+  var id =
     if gameServer.removedPlayerIds.head == nil:
-      gameServer.playerCount
+      let length = gameServer.players.len
+      gameServer.players.setLen(length + 1)
+      PlayerId(length)
     else:
       template head(): untyped =
         gameServer.removedPlayerIds.head
@@ -129,36 +133,37 @@ proc addPlayer(socket: sink AsyncSocket, teamName: string): lent Player =
       defer:
         head = head.next
       head.value
-  var team = gameServer.teams[TeamName(teamName)]
+  var team = gameServer.teams[teamName]
   for p in team.players.mitems:
-    if p.isNone:
-      let player =
-        Player(id: id, team: addr gameServer.teams[TeamName(teamName)], socket: socket)
-      gameServer.players.add(player)
-
-      p = some(addr gameServer.players.tail.value)
-      return p.get[]
+    if p == nil:
+      p = (ref Player)(team: addr gameServer.teams[teamName], socket: socket)
+      gameServer.players[uint(id)] = p
+      return id
   raise Defect.newException "Team is full"
 
 proc getPlayer(id: PlayerId): lent Player =
-  for p in gameServer.players:
-    if p.id == id:
-      return p
-  raise Defect.newException "Player not found"
+  let player = gameServer.players[uint(id)]
+  if player == nil:
+    raise Defect.newException "Player not found"
+  player[]
+
+proc mgetPlayer(id: PlayerId): var Player =
+  let player = gameServer.players[uint(id)]
+  if player == nil:
+    raise Defect.newException "Player not found"
+  player[]
 
 proc removePlayer(id: PlayerId) =
-  var
-    node = gameServer.players.head
-    parent: SinglyLinkedNode[Player]
-
-  while node != nil:
-    if node.value.id == id:
-      if parent == nil:
-        gameServer.players.head = node.next
-      else:
-        parent.next = node.next
-    parent = node
-    node = node.next
+  let player = gameServer.players[uint(id)]
+  if player == nil:
+    raise Defect.newException "Player not found"
+  
+  gameServer.removedPlayerIds.add(id)
+  gameServer.players[uint(id)] = nil
+  for p in player.team.players.mitems:
+    if p == player:
+      p = nil
+      break
 
 proc getWorldTile(x: int, y: int): lent WorldTile =
   gameServer.world[y * conf.width + x]
@@ -192,7 +197,7 @@ proc mct(gfx: GfxClient) {.async.} =
           i = i + j
           y = int(i / conf.width)
           x = i - y * conf.width
-          content = gameServer.world[i].mapIt($it).join(" ")
+          content = gameServer.world[i].resources.mapIt($it).join(" ")
 
         fmt "bct {x} {y} {content}"
 
@@ -216,24 +221,24 @@ proc tna(gfx: GfxClient) {.async.} =
   if i != tnaChunkSize:
     await gfx.socket.send chunk[0 ..< i].join("\n") & "\n"
 
-proc pnw(gfx: GfxClient, player: Player) {.async.} =
+proc pnw(gfx: GfxClient, playerId: PlayerId) {.async.} =
   ## New player connection
 
   let
-    id = player.team[].players.findIt(it.id == player.id)
+    player = gameServer.players[uint(playerId)]
     (posX, posY) = player.position
     orientation = ord player.orientation
     level = player.level
     teamName = player.team[].name[]
 
-  await gfx.socket.send fmt "pnw #{id} {posX} {posY} {orientation} {level} {teamName}\n"
+  await gfx.socket.send fmt "pnw #{playerId} {posX} {posY} {orientation} {level} {teamName}\n"
 
-proc ppo(gfx: GfxClient, playerId: PlayerId) =
+proc ppo(gfx: GfxClient, playerId: PlayerId) {.async.} =
   ## Get player position and orientation
 
   let player = getPlayer(playerId)
 
-  await gfx.socket.send fmt "ppo {player.pos.x} {player.pos.y} {player.orientation}\n"
+  await gfx.socket.send fmt "ppo #{playerId} {player.position.x} {player.position.y} {player.orientation}\n"
 
 proc handleGfxConnection(client: AsyncSocket) {.async.} =
   block:
@@ -255,7 +260,7 @@ proc handleGfxConnection(client: AsyncSocket) {.async.} =
     # gfx loop
     discard
 
-proc handlePlayer(player: var Player) =
+proc handlePlayer(playerId: PlayerId) =
   while true:
     discard
 
@@ -285,7 +290,7 @@ proc handlePlayerConnection(client: AsyncSocket) {.async.} =
           {conf.width} {conf.height}
           """
 
-  var player = addPlayer(client, team)
+  var player = addPlayer(client, teamName)
 
   handlePlayer(player)
 
