@@ -107,7 +107,7 @@ macro parseArgs*(T: typedesc[typed]): untyped =
       if field.kind == cfkArg:
         field.name
 
-  func parser(typeName, val: string): NimNode =
+  proc parser(typeName, val: string): NimNode =
     result =
       if typeName == "string":
         newTree(nnkPrefix, ident("$"))
@@ -116,11 +116,11 @@ macro parseArgs*(T: typedesc[typed]): untyped =
         if typeName in typeToGenerics:
           var children = @[parseFn]
           children.add(typeToGenerics[typeName].mapIt(ident it))
-          parseFn = unpackVarargs(newTree, nnkBracket, children)
+          parseFn = newTree.unpackVarargs(nnkBracket, children)
         newCall(ident("parse" & typeName))
     result.add ident(val)
 
-  func assignField(fieldName, val: string): NimNode =
+  proc assignField(fieldName, val: string): NimNode =
     newStmtList(
       newTree(
         nnkAsgn,

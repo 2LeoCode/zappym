@@ -1,4 +1,4 @@
-import std/[macros, strutils, sugar, sequtils, options]
+import std/[macros, strutils, sugar, sequtils, options, lists]
 
 macro yieldFrom*(iter: untyped): untyped =
   quote:
@@ -54,6 +54,28 @@ template isSomeAndIt*(opt: Option, expr): bool =
       let it {.inject.} = opt.unsafeGet
       expr
   )
+
+func popFront*[T](self: var SinglyLinkedList[T]): T =
+  template head: untyped = self.head
+
+  result = head.value
+  head = head.next
+
+func isEmpty*(self: SomeLinkedList): bool =
+  self.head == nil
+
+macro are*(T: typedesc[typed], exprs: untyped{nkStmtList}): untyped =
+  result = newStmtList()
+  for expr in exprs:
+    result.add:
+      quote:
+        `expr` is `T`
+
+type Orientation = enum
+  oNorth = 1
+  oEast
+  oSouth
+  oWest
 
 # macro wrapperObject*(WrappedType: typedesc[typed]) =
 #   newTree(

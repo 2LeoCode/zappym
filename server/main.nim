@@ -10,6 +10,7 @@ static:
   doAssert isMainModule, "This file is not a module"
 
 const PLAYERS_PER_TEAM = 6
+const PLAYER_MAX_TIME_TO_DIE = 3 * 126
 
 type ItemKind = enum
   ikNourriture
@@ -30,56 +31,20 @@ type PlayerLevel = distinct range[0 .. 6]
 
 func `$`(self: PlayerLevel): string {.borrow.}
 
-type PlayerId = distinct uint
+type
+  PlayerId = distinct uint
+  EggId = distinct uint
 
 func `==`(lhs, rhs: PlayerId): bool {.borrow.}
 func `$`(self: PlayerId): string {.borrow.}
 
-type TeamName = distinct string
+type
+  TeamName = distinct string
+  TeamNameSeq = seq[TeamName]
 
 func hash(self: TeamName): Hash {.borrow.}
 func `==`(lhs: TeamName, rhs: TeamName): bool {.borrow.}
 func `$`(self: TeamName): string {.borrow.}
-
-type
-  WorldTile = object
-    resources: array[ItemKind, uint]
-
-  GfxClient = object
-    socket: AsyncSocket
-
-  Player = object
-    socket: AsyncSocket
-    team: ptr Team
-    position: Position
-    orientation: Orientation
-    level: PlayerLevel
-    inventory: array[ItemKind, uint]
-
-  Config = object
-    port {.opt.} = 4242
-    width {.opt(shortName = some('x')).} = 2048
-    height {.opt(shortName = some('y')).} = 2048
-    teamNames {.opt(shortName = some('n')).}: TeamNameSeq
-    startPlayerLimit {.opt(shortName = some('c')).} = 18
-    timeUnit {.opt.} = 1
-
-  Team = object
-    name: ptr TeamName
-    players: array[PLAYERS_PER_TEAM, ref Player]
-    births = 0
-    deaths = 0
-
-  Position = tuple[x: int, y: int]
-  TeamNameSeq = seq[TeamName]
-
-  GameServer = object
-    socket: AsyncSocket
-    players: seq[ref Player]
-    removedPlayerIds: SinglyLinkedList[PlayerId]
-    gfxClients: SinglyLinkedList[GfxClient]
-    teams: Table[TeamName, Team]
-    world: seq[WorldTile]
 
 func parseTeamNameSeq(value: string): TeamNameSeq =
   let teamNames = value.split(',')
@@ -95,12 +60,88 @@ func parseTeamNameSeq(value: string): TeamNameSeq =
     for name in teamNames:
       TeamName(name)
 
+type
+  WorldTile = object
+    resources: array[ItemKind, uint]
+
+  SomeGameClient = concept x
+    x.sendLine(string) is Future[void]
+
+  GameClient = object of RootObj
+    socket: AsyncSocket
+
+  SomeGfxClient = concept x, SomeGameClient
+    x.msz is Future[void]
+    x.bct(int, int) is Future[void]
+    x.mct is Future[void]
+    x.tna is Future[void]
+    x.pnw(PlayerId) is Future[void]
+    x.ppo(PlayerId) is Future[void]
+    x.plv(PlayerId) is Future[void]
+    x.pin(PlayerId) is Future[void]
+    x.pex(PlayerId) is Future[void]
+    x.pbc(PlayerId) is Future[void]
+    x.pic(int, int, PlayerLevel, PlayerId, varargs[PlayerId]) is Future[void]
+    x.pie(int, int, bool) is Future[void]
+    x.pfk(PlayerId) is Future[void]
+    x.pdr(PlayerId, ItemKind) is Future[void]
+    x.pgt(PlayerId, ItemKind) is Future[void]
+    x.pdi(PlayerId) is Future[void]
+
+  GfxClient = object of GameClient
+
+  Player = object of GameClient
+    team: ptr Team
+    position: Position
+    orientation: Orientation
+    level: PlayerLevel
+    timeToDie: uint
+    inventory: array[ItemKind, uint]
+  
+  Config = object
+    port {.opt.} = 4242
+    width {.opt(shortName = some('x')).} = 2048
+    height {.opt(shortName = some('y')).} = 2048
+    teamNames {.opt(shortName = some('n')).}: TeamNameSeq
+    startPlayerLimit {.opt(shortName = some('c')).} = 18
+    timeUnit {.opt.} = 1
+
+  Egg = object
+    case hatched: bool
+    of true:
+      hatchTime: uint
+    of false:
+      discard
+
+
+  Team = object
+    name: ptr TeamName
+    players: array[PLAYERS_PER_TEAM, ref Player]
+    eggs: seq[Egg]
+    removedEggIds: SinglyLinkedList[EggId]
+    births = 0
+    deaths = 0
+
+  Position = tuple[x: int, y: int]
+
+  GameServer = object
+    socket: AsyncSocket
+    players: seq[ref Player]
+    removedPlayerIds: SinglyLinkedList[PlayerId]
+    gfxClients: SinglyLinkedList[GfxClient]
+    teams: Table[TeamName, Team]
+    world: seq[WorldTile]
+
+proc `=copy`(self: var Player, other: Player) {.error.}
+
 let conf =
   try:
     Config.parseArgs
   except CatchableError as e:
     echo fmt"Error: {e.msg}"
     quit(1)
+
+
 
 proc initGameServer(conf: Config): GameServer =
   escalate ValueError:
@@ -118,21 +159,22 @@ func playerCount(self: Team): int =
       inc result
 
 proc addTeam(name: sink TeamName): Team =
-  gameServer.teams[name] = Team(name: addr name)
+  if gameServer.teams.hasKeyOrPut(name, Team(name: addr name)):
+    raise Defect.newException "Team already exists"
+
+proc removeTeam(name: TeamName) =
+  if not gameServer.teams.hasKey(name):
+    raise Defect.newException "Team doesn't exist"
+  gameServer.teams.del(name)
 
 proc addPlayer(socket: sink AsyncSocket, teamName: TeamName): PlayerId =
   var id =
-    if gameServer.removedPlayerIds.head == nil:
-      let length = gameServer.players.len
-      gameServer.players.setLen(length + 1)
-      PlayerId(length)
-    else:
-      template head(): untyped =
-        gameServer.removedPlayerIds.head
-
+    if gameServer.removedPlayerIds.isEmpty:
       defer:
-        head = head.next
-      head.value
+        gameServer.players.add nil
+      PlayerId(gameServer.players.len)
+    else:
+      gameServer.removedPlayerIds.popFront()
   var team = gameServer.teams[teamName]
   for p in team.players.mitems:
     if p == nil:
@@ -164,6 +206,10 @@ proc removePlayer(id: PlayerId) =
     if p == player:
       p = nil
       break
+
+proc addGfx(socket: sink AsyncSocket): lent GfxClient =
+  gameServer.gfxClients.add(GfxClient(socket: socket))
+  gameServer.gfxClients.tail.value
 
 proc getWorldTile(x: int, y: int): lent WorldTile =
   gameServer.world[y * conf.width + x]
@@ -240,6 +286,40 @@ proc ppo(gfx: GfxClient, playerId: PlayerId) {.async.} =
 
   await gfx.socket.send fmt "ppo #{playerId} {player.position.x} {player.position.y} {player.orientation}\n"
 
+proc plv(gfx: GfxClient, playerId: PlayerId) {.async.} =
+  ## Get player level
+
+  let player = getPlayer(playerId)
+  await gfx.socket.send fmt "plv #{playerId} {ord player.level}\n"
+
+proc pin(gfx: GfxClient, playerId: PlayerId) {.async.} =
+  ## Get player inventory
+
+  let
+    player = getPlayer(playerId)
+    contents = collect(
+      for item in player.inventory:
+        $item
+    ).join(" ")
+
+  await gfx.socket.send fmt "pin #{playerId} {contents}\n"
+  
+proc pex(gfx: GfxClient, playerId: PlayerId) {.async.} =
+  ## A player is expelled
+
+  await gfx.socket.send fmt "pex #{playerId}\n"
+
+proc pbc(gfx: GfxClient, playerId: PlayerId, msg: string) {.async.} = 
+  ## A player broadcasts a message
+
+  await gfx.socket.send fmt "pbc #{playerId} {msg}\n"
+
+proc handleGfx(gfx: GfxClient) {.async.} =
+  await gfx.mct()
+  while true:
+    # gfx loop
+    discard
+
 proc handleGfxConnection(client: AsyncSocket) {.async.} =
   block:
     let tnaContent = conf.teamNames.join " "
@@ -253,14 +333,10 @@ proc handleGfxConnection(client: AsyncSocket) {.async.} =
             tna {tnaContent}
             """
 
-  let gfx = GfxClient(socket: client)
+  let gfx = addGfx(client)
+  await handleGfx(gfx)
 
-  await gfx.mct()
-  while true:
-    # gfx loop
-    discard
-
-proc handlePlayer(playerId: PlayerId) =
+proc handlePlayer(playerId: PlayerId) {.async.} =
   while true:
     discard
 
@@ -290,9 +366,12 @@ proc handlePlayerConnection(client: AsyncSocket) {.async.} =
           {conf.width} {conf.height}
           """
 
-  var player = addPlayer(client, teamName)
+  var playerId = addPlayer(client, teamName)
 
-  handlePlayer(player)
+  for gfx in gameServer.gfxClients:
+    await gfx.pnw(playerId)
+
+  await handlePlayer(playerId)
 
 proc handleClient(client: AsyncSocket) {.async.} =
   await client.send "BIENVENUE\n"

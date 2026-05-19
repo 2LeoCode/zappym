@@ -1,0 +1,6 @@
+--experimental:views
+--experimental:strictFuncs
+--experimental:strictDefs
+--experimental:strictNotNil
+--experimental:inferGenericTypes
+--experimental:strictCaseObjects
